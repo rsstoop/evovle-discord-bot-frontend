@@ -105,8 +105,8 @@ export default function Settings() {
                     <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
                       <li>Open Discord and go to your server</li>
                       <li>Right-click on the channel you want to include</li>
-                      <li>Click "Copy Channel ID" (you may need to enable Developer Mode first)</li>
-                      <li>If "Copy Channel ID" is not visible, go to User Settings → Advanced → Enable Developer Mode</li>
+                      <li>Click &quot;Copy Channel ID&quot; (you may need to enable Developer Mode first)</li>
+                      <li>If &quot;Copy Channel ID&quot; is not visible, go to User Settings → Advanced → Enable Developer Mode</li>
                       <li>Paste the channel ID in the field below and click Add</li>
                     </ol>
                   </div>

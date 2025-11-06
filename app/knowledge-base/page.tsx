@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { BookOpen, Search, Plus, Trash2, Menu, X } from "lucide-react";
+import { BookOpen, Search, Plus, Trash2, Menu, X, Download } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { Sidebar } from "@/components/sidebar";
 import { cn } from "@/lib/utils";
@@ -177,6 +177,26 @@ function KnowledgeBaseContent() {
     }
   };
 
+  const handleDownload = (item: KnowledgeBaseItem) => {
+    const blob = new Blob([item.html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    
+    // Ensure filename always ends with .html
+    let filename = item.source_filename || `${item.title || 'document'}.html`;
+    if (!filename.toLowerCase().endsWith('.html')) {
+      filename = `${filename}.html`;
+    }
+    
+    a.download = filename;
+    a.setAttribute('type', 'text/html');
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const getTitleFromHtml = (html: string): string => {
     const match = html.match(/<h1>(.*?)<\/h1>/);
     return match ? match[1] : "Untitled";
@@ -250,14 +270,23 @@ function KnowledgeBaseContent() {
                   <h1 className="text-base font-normal">Knowledge Base</h1>
                 </div>
                 {!isPublicDomain && (
-                  <button
-                    onClick={() => setShowDeleteDialog(true)}
-                    className="inline-flex items-center text-xs px-2 py-1 rounded border border-border hover:bg-muted/20"
-                    disabled={deletingId === selectedItem.id}
-                    title="Delete this document"
-                  >
-                    <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleDownload(selectedItem)}
+                      className="inline-flex items-center text-xs px-2 py-1 rounded border border-border hover:bg-muted/20"
+                      title="Download this document"
+                    >
+                      <Download className="h-3.5 w-3.5 mr-1" /> Download
+                    </button>
+                    <button
+                      onClick={() => setShowDeleteDialog(true)}
+                      className="inline-flex items-center text-xs px-2 py-1 rounded border border-border hover:bg-muted/20"
+                      disabled={deletingId === selectedItem.id}
+                      title="Delete this document"
+                    >
+                      <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete
+                    </button>
+                  </div>
                 )}
               </div>
               
