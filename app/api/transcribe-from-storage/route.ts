@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
-import OpenAI from 'openai'
+import { compressAudioToSize, isCloudinaryConfigured } from '@/lib/cloudinary'
 
 export const runtime = 'nodejs'
 
@@ -81,54 +81,239 @@ export async function POST(req: Request) {
       }
     }
 
-    const file = new File([new Uint8Array(ab!)], 'audio.mp3', { type: 'audio/mpeg' })
-    console.log('[transcribe-from-storage] 📍 STEP 4: File object created, preparing for Whisper...')
+    let fileBuffer: Buffer = Buffer.from(ab!)
 
-    // Transcribe with retry
-    const apiKey = process.env.OPENAI_API_KEY
-    if (!apiKey) {
-      console.error('[transcribe-from-storage] ❌ OPENAI_API_KEY missing from environment')
-      return NextResponse.json({ error: 'Server missing OPENAI_API_KEY' }, { status: 500 })
+    // Detect if this is a video file that needs audio extraction
+    const isVideo = path.match(/\.(mp4|mov|avi|webm|mkv|flv)$/i)
+    const isAudio = path.match(/\.(mp3|wav|m4a|ogg)$/i)
+
+    if (isVideo) {
+      console.log('[transcribe-from-storage] 📍 Video file detected, extracting audio via Cloudinary...', {
+        path,
+        originalVideoSizeMB: (fileBuffer.length / 1024 / 1024).toFixed(2),
+      })
+
+      // Check if Cloudinary is configured
+      if (!isCloudinaryConfigured()) {
+        console.error('[transcribe-from-storage] ❌ Cloudinary not configured for video processing')
+        return NextResponse.json(
+          { error: 'Cloudinary is not configured. Please add CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET to environment variables.' },
+          { status: 500 }
+        )
+      }
+
+      // Extract and compress audio using Cloudinary
+      const extractionStartTime = Date.now()
+      try {
+        const format = path.split('.').pop()?.toLowerCase() || 'mp4'
+        const MAX_AUDIO_SIZE_BYTES = 25 * 1024 * 1024 // 25MB
+
+        const compressedAudio = await compressAudioToSize(fileBuffer, MAX_AUDIO_SIZE_BYTES, format)
+        fileBuffer = compressedAudio as Buffer
+
+        const extractionElapsed = Date.now() - extractionStartTime
+        const audioSizeMB = (fileBuffer.length / 1024 / 1024).toFixed(2)
+
+        console.log('[transcribe-from-storage] ✅ Audio extracted successfully', {
+          audioSizeMB,
+          extractionElapsed: `${extractionElapsed}ms`,
+        })
+      } catch (extractionErr: any) {
+        console.error('[transcribe-from-storage] ❌ Audio extraction failed', {
+          error: extractionErr.message,
+          elapsed: `${Date.now() - extractionStartTime}ms`,
+        })
+        return NextResponse.json(
+          { error: `Audio extraction failed: ${extractionErr.message}` },
+          { status: 500 }
+        )
+      }
+    }
+
+    const fileSizeMB = (fileBuffer.length / 1024 / 1024).toFixed(2)
+    const fileSizeBytes = fileBuffer.length
+    const MAX_FILE_SIZE_MB = 25
+    const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+
+    // Check file size before proceeding (applies to final audio, not original video)
+    if (fileSizeBytes > MAX_FILE_SIZE_BYTES) {
+      console.error('[transcribe-from-storage] ❌ File size exceeds maximum', {
+        fileSizeMB: parseFloat(fileSizeMB),
+        maxSizeMB: MAX_FILE_SIZE_MB,
+        fileSizeBytes,
+      })
+      return NextResponse.json(
+        { error: `Audio size (${fileSizeMB}MB) exceeds maximum allowed size (${MAX_FILE_SIZE_MB}MB)` },
+        { status: 400 }
+      )
+    }
+
+    console.log('[transcribe-from-storage] 📍 STEP 4: File buffer created, preparing for transcription...', {
+      fileSizeMB: parseFloat(fileSizeMB),
+      fileSizeBytes,
+      maxSizeMB: MAX_FILE_SIZE_MB,
+    })
+
+    // Transcribe with OpenRouter
+    const openRouterKey = process.env.OPENROUTER_API_KEY
+    // Default to google/gemini-2.5-flash if not specified (supports audio transcription)
+    const audioModel = process.env.OPENROUTER_MODEL_AUDIO || 'google/gemini-2.5-flash'
+    if (!openRouterKey) {
+      console.error('[transcribe-from-storage] ❌ OPENROUTER_API_KEY missing from environment')
+      return NextResponse.json({ error: 'Server missing OPENROUTER_API_KEY' }, { status: 500 })
     }
     
-    console.log('[transcribe-from-storage] 📍 STEP 5: Starting Whisper transcription...')
-    const whisperStartTime = Date.now()
-    const client = new OpenAI({ apiKey })
+    // Detect audio format from file path or default to mp3
+    const audioFormat = path.toLowerCase().endsWith('.wav') ? 'wav' :
+                       path.toLowerCase().endsWith('.mp3') ? 'mp3' :
+                       path.toLowerCase().endsWith('.m4a') ? 'm4a' :
+                       path.toLowerCase().endsWith('.ogg') ? 'ogg' : 'mp3'
+    
+    console.log('[transcribe-from-storage] 📍 STEP 5: Starting transcription via OpenRouter...', {
+      model: audioModel,
+      format: audioFormat,
+      fileSizeMB,
+      fileSizeBytes: fileBuffer.length,
+    })
+    const transcriptionStartTime = Date.now()
+    
+    // Convert audio to base64 (clean, no data URL prefix)
+    const base64Audio = fileBuffer.toString('base64')
+    const base64LengthKB = (base64Audio.length / 1024).toFixed(2)
+    console.log('[transcribe-from-storage] 📍 STEP 5.1: Audio converted to base64', {
+      base64Length: base64Audio.length,
+      base64LengthKB,
+    })
+    
     let tr: any
-    let whisperAttempts = 0
-    const maxWhisperAttempts = 2
-    while (whisperAttempts < maxWhisperAttempts) {
+    let transcriptionAttempts = 0
+    const maxTranscriptionAttempts = 2
+    while (transcriptionAttempts < maxTranscriptionAttempts) {
       try {
-        whisperAttempts++
-        console.log(`[transcribe-from-storage] 🔄 Whisper attempt ${whisperAttempts}/${maxWhisperAttempts} (sending ${(file.size / 1024 / 1024).toFixed(2)}MB to OpenAI)...`)
+        transcriptionAttempts++
+        console.log(`[transcribe-from-storage] 🔄 Transcription attempt ${transcriptionAttempts}/${maxTranscriptionAttempts} (sending ${fileSizeMB}MB to OpenRouter)...`)
         const attemptStartTime = Date.now()
-        tr = await client.audio.transcriptions.create({ 
-          model: 'whisper-1', 
-          file, 
-          language: 'en' as any,
+        
+        // Use OpenRouter's chat completions endpoint with audio (matching their docs exactly)
+        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${openRouterKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER || 'https://stoopdynamics.com',
+            'X-Title': 'Audio Transcription',
+          },
+          body: JSON.stringify({
+            model: audioModel,
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  {
+                    type: 'text',
+                    text: 'Please transcribe this audio file.',
+                  },
+                  {
+                    type: 'input_audio',
+                    input_audio: {
+                      data: base64Audio,
+                      format: audioFormat,
+                    },
+                  },
+                ],
+              },
+            ],
+          }),
         })
-        const whisperElapsed = Date.now() - attemptStartTime
-        console.log('[transcribe-from-storage] ✅ Whisper transcription completed', { 
-          elapsed: `${whisperElapsed}ms`,
-          attempt: whisperAttempts,
-          totalElapsed: `${Date.now() - whisperStartTime}ms`
-        })
-        break
-      } catch (whisperErr: any) {
-        if (whisperAttempts >= maxWhisperAttempts) {
-          console.error('[transcribe-from-storage] ❌ Whisper failed after all retries', { 
-            attempts: whisperAttempts,
-            error: whisperErr.message || whisperErr,
-            errorType: whisperErr.constructor?.name,
-            elapsed: `${Date.now() - whisperStartTime}ms`
-          })
-          throw new Error(`Whisper transcription failed: ${whisperErr.message || 'Unknown error'}`)
+        
+        if (!response.ok) {
+          let errorText = ''
+          try {
+            errorText = await response.text()
+            // Try to parse as JSON for better error messages
+            try {
+              const errorJson = JSON.parse(errorText)
+              throw new Error(`OpenRouter API error (${response.status}): ${errorJson.error?.message || errorJson.error || JSON.stringify(errorJson)}`)
+            } catch {
+              // If not JSON, use the text as-is
+              if (errorText.length > 500) {
+                errorText = errorText.substring(0, 500) + '... (truncated)'
+              }
+              throw new Error(`OpenRouter API error (${response.status} ${response.statusText}): ${errorText}`)
+            }
+          } catch (parseErr: any) {
+            throw parseErr
+          }
         }
-        const backoffMs = 2000 * whisperAttempts
-        console.warn(`[transcribe-from-storage] ⚠️ Whisper attempt ${whisperAttempts} failed, retrying in ${backoffMs}ms...`, { 
-          error: whisperErr.message || whisperErr,
-          errorType: whisperErr.constructor?.name,
-          nextAttempt: whisperAttempts + 1 
+        
+        const data = await response.json()
+        const transcriptionElapsed = Date.now() - attemptStartTime
+        
+        // Validate response structure
+        if (!data || !data.choices || !Array.isArray(data.choices) || data.choices.length === 0) {
+          throw new Error(`Invalid response structure from OpenRouter: ${JSON.stringify(data).substring(0, 200)}`)
+        }
+        
+        // Extract transcript from response
+        const transcriptText = data.choices[0]?.message?.content?.trim() || ''
+        
+        if (!transcriptText) {
+          throw new Error('Empty transcript returned from OpenRouter')
+        }
+        
+        // Log response for debugging
+        console.log('[transcribe-from-storage] Raw response', {
+          responseId: data.id || 'unknown',
+          transcriptLength: transcriptText.length,
+          transcriptPreview: transcriptText.substring(0, 200),
+          usage: data.usage || null,
+        })
+        
+        // Check if the response is instructions or error message instead of a transcript
+        const isInstructionResponse = transcriptText.toLowerCase().includes('please upload') || 
+                                     transcriptText.toLowerCase().includes('provide a link') ||
+                                     transcriptText.toLowerCase().includes('i can transcribe') ||
+                                     transcriptText.toLowerCase().includes('optional: please specify') ||
+                                     transcriptText.toLowerCase().includes('cannot process') ||
+                                     transcriptText.toLowerCase().includes('not supported')
+        
+        if (isInstructionResponse) {
+          console.error('[transcribe-from-storage] ⚠️ Model returned instructions/error instead of transcript', {
+            transcriptText: transcriptText.substring(0, 500),
+          })
+          throw new Error('Model returned instructions instead of transcript. The audio format may not be supported or the model may not have processed the audio correctly.')
+        }
+        
+        console.log('[transcribe-from-storage] ✅ Transcription completed', { 
+          elapsed: `${transcriptionElapsed}ms`,
+          attempt: transcriptionAttempts,
+          totalElapsed: `${Date.now() - transcriptionStartTime}ms`,
+          model: audioModel,
+          format: audioFormat,
+          responseId: data.id || 'unknown',
+          transcriptLength: transcriptText.length,
+          wordCount: transcriptText.split(/\s+/).length,
+          transcriptPreview: transcriptText.substring(0, 100) + (transcriptText.length > 100 ? '...' : ''),
+          usage: data.usage || null,
+        })
+        
+        tr = { text: transcriptText }
+        break
+      } catch (transcriptionErr: any) {
+        if (transcriptionAttempts >= maxTranscriptionAttempts) {
+          console.error('[transcribe-from-storage] ❌ Transcription failed after all retries', { 
+            attempts: transcriptionAttempts,
+            error: transcriptionErr.message || transcriptionErr,
+            errorType: transcriptionErr.constructor?.name,
+            elapsed: `${Date.now() - transcriptionStartTime}ms`
+          })
+          throw new Error(`Transcription failed: ${transcriptionErr.message || 'Unknown error'}`)
+        }
+        const backoffMs = 2000 * transcriptionAttempts
+        console.warn(`[transcribe-from-storage] ⚠️ Transcription attempt ${transcriptionAttempts} failed, retrying in ${backoffMs}ms...`, { 
+          error: transcriptionErr.message || transcriptionErr,
+          errorType: transcriptionErr.constructor?.name,
+          nextAttempt: transcriptionAttempts + 1 
         })
         await new Promise(r => setTimeout(r, backoffMs))
       }
@@ -136,11 +321,11 @@ export async function POST(req: Request) {
     
     const text = typeof tr?.text === 'string' ? tr.text.trim() : ''
     if (!text) {
-      console.error('[transcribe-from-storage] ❌ Empty transcript returned from Whisper', { 
+      console.error('[transcribe-from-storage] ❌ Empty transcript returned', { 
         tr: tr ? Object.keys(tr) : 'null',
         totalElapsed: `${Date.now() - startTime}ms`
       })
-      return NextResponse.json({ error: 'Empty transcript from Whisper' }, { status: 500 })
+      return NextResponse.json({ error: 'Empty transcript returned' }, { status: 500 })
     }
     const totalElapsed = Date.now() - startTime
     console.log('[transcribe-from-storage] ✅✅✅ COMPLETE - Transcription successful!', { 
