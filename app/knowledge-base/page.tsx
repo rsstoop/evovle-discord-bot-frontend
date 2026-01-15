@@ -1106,114 +1106,78 @@ function KnowledgeBaseContent() {
                     const fileExtension = pendingVideo.name.split('.').pop()?.toLowerCase() || 'mp4';
                     const isVideo = ['mp4', 'mov', 'avi', 'webm', 'mkv', 'flv'].includes(fileExtension);
 
-                    if (isVideo) {
-                      // For videos: Upload directly to Cloudinary and extract audio
-                      setSubmissionStatus({ step: 'uploading', message: 'Processing video...' });
+                    // Upload to Supabase Storage first (for both video and audio)
+                    setSubmissionStatus({ step: 'uploading', message: 'Uploading...' });
 
-                      console.log('[Video upload] Uploading to Cloudinary', {
-                        fileName: pendingVideo.name,
-                        fileSize: pendingVideo.size,
-                        fileSizeMB: (pendingVideo.size / 1024 / 1024).toFixed(2),
-                        fileExtension,
-                      });
+                    console.log('[Media upload] Getting signed upload URL', {
+                      fileName: pendingVideo.name,
+                      fileSize: pendingVideo.size,
+                      fileSizeMB: (pendingVideo.size / 1024 / 1024).toFixed(2),
+                      fileExtension,
+                      isVideo,
+                    });
 
-                      // Create FormData for multipart upload
-                      const formData = new FormData();
-                      formData.append('video', pendingVideo);
-                      formData.append('format', fileExtension);
+                    // Get signed upload URL from Supabase
+                    const signedRes = await fetch('/api/storage/signed-upload', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ fileExtension }),
+                    });
 
-                      // Upload to Cloudinary and extract audio
-                      const uploadRes = await fetch('/api/cloudinary/upload-and-extract', {
-                        method: 'POST',
-                        body: formData,
-                      });
-
-                      if (!uploadRes.ok) {
-                        const body = await uploadRes.json().catch(() => ({}));
-                        console.error('[Video upload] Upload/extraction failed', body);
-
-                        let errorMsg = body?.error || 'Failed to upload and extract audio from video.';
-                        if (body?.error?.includes('413') || body?.error?.includes('Payload too large') || body?.error?.includes('too large')) {
-                          errorMsg = `Video file is too large. Cloudinary free tier supports up to 100MB. Your file is ${(pendingVideo.size / 1024 / 1024).toFixed(0)}MB.\n\nQuick fix: Re-export in low quality (720p or lower).\n\nOr use HandBrake to compress it.`;
-                        }
-
-                        alert(errorMsg);
-                        return;
-                      }
-
-                      const { audio: audioBase64 } = await uploadRes.json();
-                      console.log('[Video upload] Audio extracted successfully');
-
-                      // Transcribe the extracted audio
-                      setSubmissionStatus({ step: 'transcribing', message: 'Transcribing...' });
-                      const tres = await fetch('/api/transcribe-audio', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ audioBase64, format: 'mp3' }),
-                      });
-
-                      if (!tres.ok) {
-                        const body = await tres.json().catch(() => ({}));
-                        console.error(body);
-                        alert(body?.error || 'Failed to transcribe audio.');
-                        return;
-                      }
-
-                      var { text } = await tres.json();
-                    } else {
-                      // For audio files: Use existing Supabase Storage flow
-                      setSubmissionStatus({ step: 'uploading', message: 'Uploading audio...' });
-
-                      const signRes = await fetch('/api/storage/signed-upload', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ fileExtension }),
-                      });
-                      if (!signRes.ok) {
-                        const body = await signRes.json().catch(() => ({}));
-                        console.error(body);
-                        alert(body?.error || 'Failed to prepare upload.');
-                        return;
-                      }
-                      var { bucket, path, signedUrl } = await signRes.json();
-
-                      const fileArrayBuffer = await pendingVideo.arrayBuffer();
-                      const contentTypeMap: Record<string, string> = {
-                        mp3: 'audio/mpeg',
-                        wav: 'audio/wav',
-                        m4a: 'audio/mp4',
-                        ogg: 'audio/ogg',
-                      };
-                      const contentType = contentTypeMap[fileExtension] || 'application/octet-stream';
-
-                      const uploadRes = await fetch(signedUrl, {
-                        method: 'PUT',
-                        headers: { 'Content-Type': contentType },
-                        body: fileArrayBuffer,
-                      });
-
-                      if (!uploadRes.ok) {
-                        alert('Failed to upload audio file.');
-                        return;
-                      }
-
-                      console.log('[Audio upload] File uploaded successfully to Supabase');
-
-                      setSubmissionStatus({ step: 'transcribing', message: 'Transcribing...' });
-                      const tres = await fetch('/api/transcribe-from-storage', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ bucket, path }),
-                      });
-                      if (!tres.ok) {
-                        const body = await tres.json().catch(() => ({}));
-                        console.error(body);
-                        alert(body?.error || 'Failed to transcribe audio from storage.');
-                        return;
-                      }
-                      var { text } = await tres.json();
+                    if (!signedRes.ok) {
+                      const body = await signedRes.json().catch(() => ({}));
+                      console.error('[Media upload] Failed to get signed URL', body);
+                      alert(body?.error || 'Failed to prepare upload.');
+                      return;
                     }
 
+                    const { url: uploadUrl, path, bucket } = await signedRes.json();
+                    console.log('[Media upload] Got signed URL', { path, bucket });
+
+                    // Upload file to Supabase Storage
+                    const uploadResponse = await fetch(uploadUrl, {
+                      method: 'PUT',
+                      body: pendingVideo,
+                      headers: {
+                        'Content-Type': pendingVideo.type || 'application/octet-stream',
+                      },
+                    });
+
+                    if (!uploadResponse.ok) {
+                      console.error('[Media upload] Upload failed', {
+                        status: uploadResponse.status,
+                        statusText: uploadResponse.statusText,
+                      });
+
+                      let errorMsg = 'Failed to upload file to storage.';
+                      if (uploadResponse.status === 413) {
+                        errorMsg = `File too large for Supabase Storage. Maximum is ~100MB. Your file is ${(pendingVideo.size / 1024 / 1024).toFixed(0)}MB.\n\nQuick fix: Re-export in low quality (720p or lower).`;
+                      }
+
+                      alert(errorMsg);
+                      return;
+                    }
+
+                    console.log('[Media upload] File uploaded successfully to Supabase');
+
+                    // Transcribe from Supabase Storage (API will handle video extraction via Cloudinary)
+                    setSubmissionStatus({ step: 'transcribing', message: 'Transcribing...' });
+                    const tres = await fetch('/api/transcribe-from-storage', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ bucket, path }),
+                    });
+
+                    if (!tres.ok) {
+                      const body = await tres.json().catch(() => ({}));
+                      console.error('[Media upload] Transcription failed', body);
+                      alert(body?.error || 'Failed to transcribe.');
+                      return;
+                    }
+
+                    var { text } = await tres.json();
+
+                    // Generate HTML from transcript
                     setSubmissionStatus({ step: 'generating', message: 'Generating HTML...' });
                     // 3) Generate structured HTML from transcript using OpenRouter
                     const htmlRes = await fetch('/api/generate-html-from-transcript', {
@@ -1239,7 +1203,8 @@ function KnowledgeBaseContent() {
                         html,
                         parent: videoParent,
                         transcript: text,
-                        // Note: Videos are not stored in Supabase anymore, only audio files
+                        video_storage_path: path,
+                        video_storage_bucket: bucket,
                       }),
                     });
                     const uploadResult = await ures.json();
