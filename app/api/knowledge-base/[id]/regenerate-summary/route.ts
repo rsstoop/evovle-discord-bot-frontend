@@ -70,13 +70,24 @@ export async function POST(
 
   try {
     const supabaseAdmin = getSupabaseAdmin()
-    
-    // Fetch the document
-    const { data: doc, error: fetchError } = await supabaseAdmin
-      .from('dashboard_knowledge_base')
-      .select('id, html')
-      .eq('id', id)
-      .single()
+
+    // Determine if we're dealing with numeric doc_id or UUID id
+    const numericId = Number(id)
+    const isNumericId = !isNaN(numericId) && isFinite(numericId)
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+
+    // Fetch the document using the appropriate field
+    let query = supabaseAdmin.from('dashboard_knowledge_base').select('id, html')
+
+    if (isUUID) {
+      query = query.eq('id', id)
+    } else if (isNumericId) {
+      query = query.eq('doc_id', numericId)
+    } else {
+      query = query.eq('id', id)
+    }
+
+    const { data: doc, error: fetchError } = await query.single()
 
     if (fetchError) throw fetchError
     if (!doc) {
@@ -89,11 +100,11 @@ export async function POST(
     // Generate summary
     const summary = await generateSummary(doc.html)
 
-    // Update the document
+    // Update the document using the UUID id from the fetched document
     const { error: updateError } = await supabaseAdmin
       .from('dashboard_knowledge_base')
       .update({ summary, updated_at: new Date().toISOString() })
-      .eq('id', id)
+      .eq('id', doc.id)
 
     if (updateError) throw updateError
 

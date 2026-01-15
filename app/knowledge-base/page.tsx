@@ -11,8 +11,8 @@ import { Sidebar } from "@/components/sidebar";
 import { cn } from "@/lib/utils";
 
 interface KnowledgeBaseItem {
-  id: number;
-  doc_id: string;
+  id: string;  // UUID primary key
+  doc_id: number;  // Integer display ID
   source_filename: string;
   title: string;
   html: string;
@@ -130,7 +130,7 @@ function KnowledgeBaseContent() {
 
   const getNextDocId = (): number => {
     const existing = items
-      .map((i) => (typeof i.doc_id === "string" ? parseInt(i.doc_id as unknown as string, 10) : (i.doc_id as unknown as number)))
+      .map((i) => i.doc_id)
       .filter((n) => Number.isFinite(n));
     if (existing.length === 0) return 1;
     return Math.max(...existing) + 1;

@@ -41,19 +41,22 @@ export async function PUT(
       updateData.parent = parent === null || parent.trim() === '' ? null : parent.trim()
     }
 
-    // Determine if we're dealing with numeric ID or UUID (doc_id)
+    // Determine if we're dealing with numeric doc_id or UUID id
     const numericId = Number(id)
     const isNumericId = !isNaN(numericId) && isFinite(numericId)
     const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
 
     // Build the update query with the appropriate field
+    // UUID → query by 'id' (UUID primary key)
+    // Number → query by 'doc_id' (integer display ID)
     let updateQuery = supabaseAdmin.from('dashboard_knowledge_base').update(updateData)
 
-    if (isNumericId) {
-      updateQuery = updateQuery.eq('id', numericId)
-    } else if (isUUID) {
-      updateQuery = updateQuery.eq('doc_id', id)
+    if (isUUID) {
+      updateQuery = updateQuery.eq('id', id)
+    } else if (isNumericId) {
+      updateQuery = updateQuery.eq('doc_id', numericId)
     } else {
+      // Fallback: try as string ID
       updateQuery = updateQuery.eq('id', id)
     }
 
@@ -110,7 +113,7 @@ export async function DELETE(
     const supabaseAdmin = getSupabaseAdmin()
     console.log(`[delete-kb] Supabase admin initialized`)
 
-    // Determine if we're dealing with numeric ID or UUID (doc_id)
+    // Determine if we're dealing with numeric doc_id or UUID id
     const numericId = Number(id)
     const isNumericId = !isNaN(numericId) && isFinite(numericId)
     const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
@@ -118,13 +121,16 @@ export async function DELETE(
     console.log(`[delete-kb] ID type check:`, { isNumericId, isUUID, id })
 
     // First, check if the document exists (search by appropriate field)
+    // UUID → query by 'id' (UUID primary key)
+    // Number → query by 'doc_id' (integer display ID)
     let query = supabaseAdmin.from('dashboard_knowledge_base').select('id, doc_id, title')
 
-    if (isNumericId) {
-      query = query.eq('id', numericId)
-    } else if (isUUID) {
-      query = query.eq('doc_id', id)
+    if (isUUID) {
+      query = query.eq('id', id)
+    } else if (isNumericId) {
+      query = query.eq('doc_id', numericId)
     } else {
+      // Fallback: try as string ID
       query = query.eq('id', id)
     }
 
@@ -156,13 +162,16 @@ export async function DELETE(
     }
 
     // Delete the document using the appropriate field
+    // UUID → delete by 'id' (UUID primary key)
+    // Number → delete by 'doc_id' (integer display ID)
     let deleteQuery = supabaseAdmin.from('dashboard_knowledge_base').delete()
 
-    if (isNumericId) {
-      deleteQuery = deleteQuery.eq('id', numericId)
-    } else if (isUUID) {
-      deleteQuery = deleteQuery.eq('doc_id', id)
+    if (isUUID) {
+      deleteQuery = deleteQuery.eq('id', id)
+    } else if (isNumericId) {
+      deleteQuery = deleteQuery.eq('doc_id', numericId)
     } else {
+      // Fallback: try as string ID
       deleteQuery = deleteQuery.eq('id', id)
     }
 
