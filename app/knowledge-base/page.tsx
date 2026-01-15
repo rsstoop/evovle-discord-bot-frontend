@@ -1159,10 +1159,9 @@ function KnowledgeBaseContent() {
                       const { public_id: publicId } = await cloudinaryUploadRes.json();
                       console.log('[Video upload] Video uploaded to Cloudinary', { publicId });
 
-                      // Process video on server (extract audio)
-                      setSubmissionStatus({ step: 'transcribing', message: 'Extracting audio...' });
+                      // Process video on server (extract audio and transcribe)
+                      setSubmissionStatus({ step: 'transcribing', message: 'Processing video...' });
 
-                      let audioBase64: string;
                       let currentBitrate = '64k';
 
                       // Try different bitrates if needed
@@ -1187,26 +1186,13 @@ function KnowledgeBaseContent() {
                           continue;
                         }
 
-                        audioBase64 = processResult.audio;
+                        text = processResult.transcript;
+                        console.log('[Video upload] Processing complete', {
+                          transcriptLength: text.length,
+                          audioSizeMB: processResult.audioSizeMB,
+                        });
                         break;
                       }
-
-                      // Transcribe the extracted audio
-                      setSubmissionStatus({ step: 'transcribing', message: 'Transcribing...' });
-                      const transcribeRes = await fetch('/api/transcribe-audio', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ audioBase64, format: 'mp3' }),
-                      });
-
-                      if (!transcribeRes.ok) {
-                        const body = await transcribeRes.json().catch(() => ({}));
-                        alert(body?.error || 'Failed to transcribe audio.');
-                        return;
-                      }
-
-                      const transcribeResult = await transcribeRes.json();
-                      text = transcribeResult.text;
                     } else {
                       // For audio files: Upload to Supabase Storage (small files, no issue)
                       setSubmissionStatus({ step: 'uploading', message: 'Uploading audio...' });

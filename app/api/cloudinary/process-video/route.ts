@@ -137,12 +137,68 @@ export async function POST(req: NextRequest) {
       console.error('[process-video] Failed to delete video (non-fatal):', deleteError);
     }
 
-    // Return audio as base64
+    // Transcribe audio directly (don't send back to browser to avoid body size limits)
+    console.log('[process-video] Transcribing audio...');
     const audioBase64 = audioBuffer.toString('base64');
+
+    const openRouterKey = process.env.OPENROUTER_API_KEY;
+    const audioModel = process.env.OPENROUTER_MODEL_AUDIO || 'google/gemini-2.5-flash';
+
+    if (!openRouterKey) {
+      throw new Error('OPENROUTER_API_KEY not configured');
+    }
+
+    const transcribeResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${openRouterKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER || 'https://stoopdynamics.com',
+        'X-Title': 'Video Transcription',
+      },
+      body: JSON.stringify({
+        model: audioModel,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: 'Please transcribe this audio file.',
+              },
+              {
+                type: 'input_audio',
+                input_audio: {
+                  data: audioBase64,
+                  format: 'mp3',
+                },
+              },
+            ],
+          },
+        ],
+      }),
+    });
+
+    if (!transcribeResponse.ok) {
+      const errorText = await transcribeResponse.text();
+      throw new Error(`Transcription failed: ${transcribeResponse.status} - ${errorText.substring(0, 200)}`);
+    }
+
+    const transcribeData = await transcribeResponse.json();
+    const transcript = transcribeData.choices?.[0]?.message?.content?.trim() || '';
+
+    if (!transcript) {
+      throw new Error('Empty transcript returned');
+    }
+
+    console.log('[process-video] Transcription complete', {
+      transcriptLength: transcript.length,
+      wordCount: transcript.split(/\s+/).length,
+    });
 
     return NextResponse.json({
       success: true,
-      audio: audioBase64,
+      transcript,
       audioSize: audioBuffer.length,
       audioSizeMB: parseFloat(audioSizeMB),
       format: 'mp3',
