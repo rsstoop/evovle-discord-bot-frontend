@@ -2,6 +2,17 @@
   "buildCommand": "npm run build",
   "outputDirectory": ".next",
   "framework": "nextjs",
+  "functions": {
+    "app/api/chat/route.ts": {
+      "maxDuration": 300
+    },
+    "app/api/knowledge-base/upload/route.ts": {
+      "maxDuration": 300
+    },
+    "app/api/knowledge-base/[id]/route.ts": {
+      "maxDuration": 300
+    }
+  },
   "rewrites": [
     {
       "source": "/(.*)",
@@ -9,6 +20,12 @@
     }
   ]
 }
+
+
+
+
+
+
 
 
 

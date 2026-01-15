@@ -64,6 +64,16 @@
 }
 
 @layer components {
+  /* Hide scrollbar but keep scrolling functionality */
+  .hide-scrollbar {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+  }
+
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;  /* Chrome, Safari and Opera */
+  }
+
   /* Knowledge Base Article Styling */
   article {
     @apply space-y-4;
@@ -103,6 +113,49 @@
 
   article code {
     @apply bg-muted px-1.5 py-0.5 rounded text-sm font-mono;
+  }
+
+  /* Hide weekday labels in date picker */
+  [role="grid"] thead,
+  [role="grid"] thead tr,
+  [role="grid"] thead th {
+    display: none !important;
+  }
+
+  /* Ensure navigation arrows are visible in calendar */
+  button[aria-label*="previous"],
+  button[aria-label*="next"],
+  button[aria-label*="Previous"],
+  button[aria-label*="Next"] {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    visibility: visible !important;
+    opacity: 0.7 !important;
+    min-width: 28px !important;
+    min-height: 28px !important;
+  }
+
+  button[aria-label*="previous"]:hover,
+  button[aria-label*="next"]:hover,
+  button[aria-label*="Previous"]:hover,
+  button[aria-label*="Next"]:hover {
+    opacity: 1 !important;
+  }
+
+  /* Add arrow icons via CSS if component override doesn't work */
+  button[aria-label*="previous"]:not(:has(svg))::before,
+  button[aria-label*="Previous"]:not(:has(svg))::before {
+    content: "‹";
+    font-size: 20px;
+    line-height: 1;
+  }
+
+  button[aria-label*="next"]:not(:has(svg))::before,
+  button[aria-label*="Next"]:not(:has(svg))::before {
+    content: "›";
+    font-size: 20px;
+    line-height: 1;
   }
 }
 
