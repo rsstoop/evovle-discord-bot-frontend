@@ -111,7 +111,10 @@ export async function DELETE(
 
   try {
     const supabaseAdmin = getSupabaseAdmin()
-    console.log(`[delete-kb] Supabase admin initialized`)
+    console.log(`[delete-kb] Supabase admin initialized`, {
+      hasServiceRole: !!process.env.SUPABASE_SERVICE_ROLE,
+      supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL?.substring(0, 30) + '...'
+    })
 
     // Determine if we're dealing with numeric doc_id or UUID id
     const numericId = Number(id)
@@ -164,6 +167,14 @@ export async function DELETE(
     // Delete the document using the appropriate field
     // UUID → delete by 'id' (UUID primary key)
     // Number → delete by 'doc_id' (integer display ID)
+    console.log(`[delete-kb] Preparing DELETE query:`, {
+      isUUID,
+      isNumericId,
+      queryField: isUUID ? 'id' : isNumericId ? 'doc_id' : 'id (fallback)',
+      queryValue: isUUID ? id : isNumericId ? numericId : id,
+      actualDocumentId: existingDoc.id
+    })
+
     let deleteQuery = supabaseAdmin.from('dashboard_knowledge_base').delete()
 
     if (isUUID) {
@@ -175,11 +186,13 @@ export async function DELETE(
       deleteQuery = deleteQuery.eq('id', id)
     }
 
-    const { error: deleteError } = await deleteQuery
+    const { error: deleteError, count } = await deleteQuery
 
     console.log(`[delete-kb] DELETE executed:`, {
       deleteError: deleteError?.message,
-      id
+      count,
+      id,
+      expectedDocId: existingDoc.id
     })
 
     if (deleteError) {
@@ -187,17 +200,31 @@ export async function DELETE(
     }
 
     // Verify deletion
-    const { data: checkDoc } = await supabaseAdmin
+    const { data: checkDoc, error: checkError } = await supabaseAdmin
       .from('dashboard_knowledge_base')
       .select('id')
-      .eq('id', id)
-      .single()
+      .eq('id', existingDoc.id)
+      .maybeSingle()
 
     console.log(`[delete-kb] Post-delete verification:`, {
       stillExists: !!checkDoc,
+      checkError: checkError?.message,
       success: !checkDoc
     })
 
+    if (checkDoc) {
+      console.error(`[delete-kb] CRITICAL: Document still exists after DELETE!`, {
+        documentId: existingDoc.id,
+        doc_id: existingDoc.doc_id,
+        title: existingDoc.title
+      })
+      return NextResponse.json({
+        error: 'Delete operation failed - document still exists in database',
+        details: 'The DELETE query executed but the row was not removed. Check RLS policies and database permissions.'
+      }, { status: 500 })
+    }
+
+    console.log(`[delete-kb] SUCCESS: Document deleted and verified`)
     return NextResponse.json({ success: true })
   } catch (error: any) {
     console.error(`[delete-kb] Final error:`, error)
