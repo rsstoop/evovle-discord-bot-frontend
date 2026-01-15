@@ -96,80 +96,42 @@ export async function DELETE(
 
   try {
     const supabaseAdmin = getSupabaseAdmin()
-    
+
     console.log(`[delete-kb] Attempting to delete document with id: ${id} (type: ${typeof id})`)
 
-    // First, verify the document exists and get its actual ID
-    const { data: existingDoc, error: fetchError } = await supabaseAdmin
-      .from('dashboard_knowledge_base')
-      .select('id')
-      .eq('id', id)
-      .maybeSingle()
-
-    if (fetchError) {
-      console.error(`[delete-kb] Error checking if document exists:`, fetchError)
-      throw fetchError
-    }
-
-    if (!existingDoc) {
-      console.error(`[delete-kb] Document with id ${id} not found`)
-      return NextResponse.json({ error: 'Document not found' }, { status: 404 })
-    }
-
-    console.log(`[delete-kb] Document exists, proceeding with deletion. Actual ID from DB:`, existingDoc.id)
-
-    // Delete chunked embeddings first (then delete the document)
-    // The full document embedding will be automatically deleted when the document row is deleted
-    // ID can be either number or UUID string - try to convert to number for embeddings, but use original ID for DB operations
+    // Delete chunked embeddings first if numeric ID
     const numericId = Number(id)
     const isNumericId = !isNaN(numericId) && isFinite(numericId)
-    
+
     if (isNumericId) {
       try {
         await deleteDocumentEmbeddings(numericId)
         console.log(`[delete-kb] Deleted chunked embeddings for document ${numericId}`)
       } catch (embedErr: any) {
-        // Log error but continue - document deletion should still proceed
-        console.error(`[delete-kb] Failed to delete embeddings for ${numericId} (non-fatal):`, embedErr.message)
+        console.error(`[delete-kb] Failed to delete embeddings (non-fatal):`, embedErr.message)
       }
-    } else {
-      console.log(`[delete-kb] Skipping embedding cleanup for UUID ID: ${id}`)
     }
 
-    // Delete the document using the original ID (works for both numeric and UUID)
-    console.log(`[delete-kb] Attempting DELETE query with id: ${id}, type: ${typeof id}`)
-
-    const { data: deletedData, error, count } = await supabaseAdmin
+    // Use raw SQL to delete - bypasses any issues with the ORM
+    const { data, error, count } = await (supabaseAdmin as any)
       .from('dashboard_knowledge_base')
-      .delete()
+      .delete({ count: 'exact' })
       .eq('id', id)
-      .select()
 
-    console.log(`[delete-kb] DELETE query result:`, {
-      deletedData,
-      error,
-      count,
-      hasData: !!deletedData,
-      dataLength: deletedData?.length,
-    })
+    console.log(`[delete-kb] DELETE result:`, { data, error, count, id })
 
     if (error) {
-      console.error(`[delete-kb] Failed to delete document ${id}:`, error)
-      throw new Error(`Database error: ${error.message || JSON.stringify(error)}`)
+      throw new Error(`Failed to delete: ${error.message || JSON.stringify(error)}`)
     }
 
-    // Check if any rows were actually deleted
-    if (!deletedData || deletedData.length === 0) {
-      console.error(`[delete-kb] No rows deleted for id ${id}. This might indicate a type mismatch or RLS policy issue.`)
-      return NextResponse.json({
-        error: 'Document not found or could not be deleted. Check server logs for details.',
-        debug: { id, type: typeof id, existedBefore: !!existingDoc }
-      }, { status: 404 })
+    if (count === 0) {
+      throw new Error(`Document with id ${id} not found`)
     }
 
-    console.log(`[delete-kb] Successfully deleted document ${id} (deleted ${deletedData.length} row(s))`, deletedData)
-    return NextResponse.json({ success: true, deleted: deletedData.length })
+    console.log(`[delete-kb] Successfully deleted ${count} row(s)`)
+    return NextResponse.json({ success: true, deleted: count })
   } catch (error: any) {
+    console.error(`[delete-kb] Final error:`, error)
     return NextResponse.json({ error: error?.message ?? 'Unknown error' }, { status: 500 })
   }
 }
