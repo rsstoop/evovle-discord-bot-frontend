@@ -137,25 +137,38 @@ export async function DELETE(
     }
 
     // Delete the document using the original ID (works for both numeric and UUID)
-    const { data: deletedData, error } = await supabaseAdmin
+    console.log(`[delete-kb] Attempting DELETE query with id: ${id}, type: ${typeof id}`)
+
+    const { data: deletedData, error, count } = await supabaseAdmin
       .from('dashboard_knowledge_base')
       .delete()
       .eq('id', id)
       .select()
 
+    console.log(`[delete-kb] DELETE query result:`, {
+      deletedData,
+      error,
+      count,
+      hasData: !!deletedData,
+      dataLength: deletedData?.length,
+    })
+
     if (error) {
       console.error(`[delete-kb] Failed to delete document ${id}:`, error)
-      throw error
+      throw new Error(`Database error: ${error.message || JSON.stringify(error)}`)
     }
 
     // Check if any rows were actually deleted
     if (!deletedData || deletedData.length === 0) {
-      console.error(`[delete-kb] No rows deleted for id ${id}. This might indicate a type mismatch.`)
-      return NextResponse.json({ error: 'Document not found or could not be deleted' }, { status: 404 })
+      console.error(`[delete-kb] No rows deleted for id ${id}. This might indicate a type mismatch or RLS policy issue.`)
+      return NextResponse.json({
+        error: 'Document not found or could not be deleted. Check server logs for details.',
+        debug: { id, type: typeof id, existedBefore: !!existingDoc }
+      }, { status: 404 })
     }
 
-    console.log(`[delete-kb] Successfully deleted document ${id} (deleted ${deletedData.length} row(s))`)
-    return NextResponse.json({ success: true })
+    console.log(`[delete-kb] Successfully deleted document ${id} (deleted ${deletedData.length} row(s))`, deletedData)
+    return NextResponse.json({ success: true, deleted: deletedData.length })
   } catch (error: any) {
     return NextResponse.json({ error: error?.message ?? 'Unknown error' }, { status: 500 })
   }

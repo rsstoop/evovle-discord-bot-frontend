@@ -189,16 +189,35 @@ function KnowledgeBaseContent() {
   const handleDelete = async (id: number | string) => {
     try {
       setDeletingId(id);
+      console.log('[Delete] Attempting to delete document', { id, type: typeof id });
+
       const res = await fetch(`/api/knowledge-base/${id}`, { method: 'DELETE' });
+
+      console.log('[Delete] Response received', {
+        ok: res.ok,
+        status: res.status,
+        statusText: res.statusText
+      });
+
+      const body = await res.json().catch(() => ({}));
+      console.log('[Delete] Response body:', body);
+
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        console.error(body);
+        console.error('[Delete] Delete failed:', body);
         alert(body?.error || 'Failed to delete document.');
         return;
       }
+
+      console.log('[Delete] Document deleted successfully, refreshing list...');
       await fetchKnowledgeBase();
+
       // If we deleted the selected one, clear selection
       setSelectedItem((prev) => (prev && String(prev.id) === String(id) ? null : prev));
+
+      console.log('[Delete] UI updated');
+    } catch (error: any) {
+      console.error('[Delete] Error during delete:', error);
+      alert(`Error: ${error.message || 'Failed to delete document'}`);
     } finally {
       setDeletingId(null);
     }
