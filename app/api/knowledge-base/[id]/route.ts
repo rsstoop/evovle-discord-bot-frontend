@@ -112,24 +112,20 @@ export async function DELETE(
       }
     }
 
-    // Use raw SQL to delete - bypasses any issues with the ORM
-    const { data, error, count } = await (supabaseAdmin as any)
+    // Delete the document
+    const { error } = await supabaseAdmin
       .from('dashboard_knowledge_base')
-      .delete({ count: 'exact' })
+      .delete()
       .eq('id', id)
 
-    console.log(`[delete-kb] DELETE result:`, { data, error, count, id })
+    console.log(`[delete-kb] DELETE result:`, { error, id })
 
     if (error) {
       throw new Error(`Failed to delete: ${error.message || JSON.stringify(error)}`)
     }
 
-    if (count === 0) {
-      throw new Error(`Document with id ${id} not found`)
-    }
-
-    console.log(`[delete-kb] Successfully deleted ${count} row(s)`)
-    return NextResponse.json({ success: true, deleted: count })
+    console.log(`[delete-kb] Successfully deleted document`)
+    return NextResponse.json({ success: true })
   } catch (error: any) {
     console.error(`[delete-kb] Final error:`, error)
     return NextResponse.json({ error: error?.message ?? 'Unknown error' }, { status: 500 })

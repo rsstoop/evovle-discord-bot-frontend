@@ -10,7 +10,12 @@ export function getSupabaseAdmin(): SupabaseClient {
   if (!supabaseUrl || !serviceRoleKey) {
     throw new Error('SUPABASE_SERVICE_ROLE (or SUPABASE_SERVICE_ROLE_KEY) and NEXT_PUBLIC_SUPABASE_URL must be set on the server')
   }
-  cachedAdmin = createClient(supabaseUrl, serviceRoleKey)
+  cachedAdmin = createClient(supabaseUrl, serviceRoleKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false
+    }
+  })
   return cachedAdmin
 }
 
