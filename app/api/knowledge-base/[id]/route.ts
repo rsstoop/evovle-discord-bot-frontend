@@ -84,20 +84,44 @@ export async function DELETE(
 ) {
   const cookieStore = await cookies()
   const authed = cookieStore.get('dashboard-auth')?.value === 'authenticated'
+  console.log(`[delete-kb] Auth check:`, { authed })
+
   if (!authed) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   const params = await context.params
   const id = params?.id
+  console.log(`[delete-kb] Params received:`, { id, type: typeof id, params })
+
   if (!id) {
     return NextResponse.json({ error: 'Missing id' }, { status: 400 })
   }
 
   try {
     const supabaseAdmin = getSupabaseAdmin()
+    console.log(`[delete-kb] Supabase admin initialized`)
 
-    console.log(`[delete-kb] Attempting to delete document with id: ${id} (type: ${typeof id})`)
+    // First, check if the document exists
+    const { data: existingDoc, error: fetchError } = await supabaseAdmin
+      .from('dashboard_knowledge_base')
+      .select('id, doc_id, title')
+      .eq('id', id)
+      .single()
+
+    console.log(`[delete-kb] Document lookup:`, {
+      exists: !!existingDoc,
+      doc: existingDoc,
+      fetchError: fetchError?.message
+    })
+
+    if (fetchError && fetchError.code !== 'PGRST116') {
+      throw new Error(`Error checking document: ${fetchError.message}`)
+    }
+
+    if (!existingDoc) {
+      return NextResponse.json({ error: `Document with id ${id} not found` }, { status: 404 })
+    }
 
     // Delete chunked embeddings first if numeric ID
     const numericId = Number(id)
@@ -113,18 +137,32 @@ export async function DELETE(
     }
 
     // Delete the document
-    const { error } = await supabaseAdmin
+    const { error: deleteError } = await supabaseAdmin
       .from('dashboard_knowledge_base')
       .delete()
       .eq('id', id)
 
-    console.log(`[delete-kb] DELETE result:`, { error, id })
+    console.log(`[delete-kb] DELETE executed:`, {
+      deleteError: deleteError?.message,
+      id
+    })
 
-    if (error) {
-      throw new Error(`Failed to delete: ${error.message || JSON.stringify(error)}`)
+    if (deleteError) {
+      throw new Error(`Failed to delete: ${deleteError.message || JSON.stringify(deleteError)}`)
     }
 
-    console.log(`[delete-kb] Successfully deleted document`)
+    // Verify deletion
+    const { data: checkDoc } = await supabaseAdmin
+      .from('dashboard_knowledge_base')
+      .select('id')
+      .eq('id', id)
+      .single()
+
+    console.log(`[delete-kb] Post-delete verification:`, {
+      stillExists: !!checkDoc,
+      success: !checkDoc
+    })
+
     return NextResponse.json({ success: true })
   } catch (error: any) {
     console.error(`[delete-kb] Final error:`, error)
