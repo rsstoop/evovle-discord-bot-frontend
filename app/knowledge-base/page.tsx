@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { BookOpen, Search, Plus, Trash2, Menu, X, Download, Edit, Save, XCircle, RefreshCw, FileText, Tag } from "lucide-react";
+import { BookOpen, Search, Plus, Menu, X, Download, Edit, Save, XCircle, RefreshCw, FileText, Tag } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { Sidebar } from "@/components/sidebar";
 import { cn } from "@/lib/utils";
@@ -35,12 +35,10 @@ function KnowledgeBaseContent() {
     step: 'uploading' | 'transcribing' | 'generating' | 'saving' | null;
     message: string;
   }>({ step: null, message: '' });
-  const [deletingId, setDeletingId] = useState<string | number | null>(null);
   const [fileInputKey, setFileInputKey] = useState(0); // reset file input after use
   const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [parentInput, setParentInput] = useState("");
-  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showVideoDialog, setShowVideoDialog] = useState(false);
   const [pendingVideo, setPendingVideo] = useState<File | null>(null);
   const [videoTitle, setVideoTitle] = useState("");
@@ -186,42 +184,6 @@ function KnowledgeBaseContent() {
     }
   };
 
-  const handleDelete = async (id: number | string) => {
-    try {
-      setDeletingId(id);
-      console.log('[Delete] Attempting to delete document', { id, type: typeof id });
-
-      const res = await fetch(`/api/knowledge-base/${id}`, { method: 'DELETE' });
-
-      console.log('[Delete] Response received', {
-        ok: res.ok,
-        status: res.status,
-        statusText: res.statusText
-      });
-
-      const body = await res.json().catch(() => ({}));
-      console.log('[Delete] Response body:', body);
-
-      if (!res.ok) {
-        console.error('[Delete] Delete failed:', body);
-        alert(body?.error || 'Failed to delete document.');
-        return;
-      }
-
-      console.log('[Delete] Document deleted successfully, refreshing list...');
-      await fetchKnowledgeBase();
-
-      // If we deleted the selected one, clear selection
-      setSelectedItem((prev) => (prev && String(prev.id) === String(id) ? null : prev));
-
-      console.log('[Delete] UI updated');
-    } catch (error: any) {
-      console.error('[Delete] Error during delete:', error);
-      alert(`Error: ${error.message || 'Failed to delete document'}`);
-    } finally {
-      setDeletingId(null);
-    }
-  };
 
   const handleDownload = (item: KnowledgeBaseItem) => {
     const blob = new Blob([item.html], { type: 'text/html;charset=utf-8' });
@@ -438,14 +400,6 @@ function KnowledgeBaseContent() {
                       disabled={isEditing}
                     >
                       <Edit className="h-3.5 w-3.5 mr-1" /> Edit
-                    </button>
-                    <button
-                      onClick={() => setShowDeleteDialog(true)}
-                      className="inline-flex items-center text-xs px-2 py-1 rounded border border-border hover:bg-muted/20"
-                      disabled={deletingId === selectedItem.id || isEditing}
-                      title="Delete this document"
-                    >
-                      <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete
                     </button>
                   </div>
                 )}
@@ -1028,38 +982,6 @@ function KnowledgeBaseContent() {
         </div>
       )}
 
-      {showDeleteDialog && selectedItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div
-            className="absolute inset-0 bg-black/60"
-            onClick={() => setShowDeleteDialog(false)}
-          />
-          <div className="relative bg-background border border-border rounded-md shadow-lg w-full max-w-md mx-4 p-4">
-            <h2 className="text-sm font-medium">Delete document</h2>
-            <p className="text-xs text-muted-foreground mt-1">
-              Are you sure you want to delete this document? This action cannot be undone.
-            </p>
-            <div className="mt-4 flex justify-end gap-2">
-              <Button
-                variant="ghost"
-                onClick={() => setShowDeleteDialog(false)}
-                disabled={deletingId === selectedItem.id}
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={async () => {
-                  await handleDelete(selectedItem.id);
-                  setShowDeleteDialog(false);
-                }}
-                disabled={deletingId === selectedItem.id}
-              >
-                {deletingId === selectedItem.id ? 'Deleting...' : 'Delete'}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {showVideoDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
