@@ -324,38 +324,31 @@ function KnowledgeBaseContent() {
 
     try {
       setIsDeleting(true);
-      console.log('[handleDelete] Deleting document:', selectedItem.id);
 
-      const res = await fetch(`/api/knowledge-base/${selectedItem.id}`, {
-        method: 'DELETE'
+      const res = await fetch(`/api/knowledge-base/${selectedItem.id}?t=${Date.now()}`, {
+        method: 'DELETE',
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache'
+        }
       });
 
-      console.log('[handleDelete] Response status:', res.status);
-
       if (!res.ok) {
-        const body = await res.json().catch((err) => {
-          console.error('[handleDelete] Failed to parse error response:', err);
-          return {};
-        });
-        console.error('[handleDelete] Delete failed:', body);
-        alert(body?.error || `Failed to delete document (${res.status} ${res.statusText}). Check console for details.`);
+        const body = await res.json().catch(() => ({}));
+        alert(body?.error || `Failed to delete document (${res.status} ${res.statusText})`);
         return;
       }
-
-      console.log('[handleDelete] Delete successful');
 
       // Success: clear selection and URL parameter
       setSelectedItem(null);
       router.push('/knowledge-base');
 
       // Force a re-fetch with a slight delay to ensure database is updated
-      console.log('[handleDelete] Refreshing knowledge base...');
       await new Promise(resolve => setTimeout(resolve, 500));
       await fetchKnowledgeBase();
-      console.log('[handleDelete] Knowledge base refreshed');
     } catch (error: any) {
-      console.error('[handleDelete] Error:', error);
-      alert(error?.message || 'An error occurred while deleting. Check console for details.');
+      alert(error?.message || 'An error occurred while deleting');
     } finally {
       setIsDeleting(false);
     }
@@ -431,7 +424,7 @@ function KnowledgeBaseContent() {
               <div className="flex items-center justify-between gap-2 mb-6">
                 <div className="flex items-center gap-2">
                   <BookOpen className="h-4 w-4 text-primary" />
-                  <h1 className="text-base font-normal">Knowledge Base</h1>
+                  <h1 className="text-base font-normal">Knowledge Basee</h1>
                 </div>
                 {!isPublicDomain && (
                   <div className="flex items-center gap-2">

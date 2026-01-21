@@ -12,13 +12,7 @@
     "app/api/knowledge-base/[id]/route.ts": {
       "maxDuration": 300
     }
-  },
-  "rewrites": [
-    {
-      "source": "/(.*)",
-      "destination": "/"
-    }
-  ]
+  }
 }
 
 

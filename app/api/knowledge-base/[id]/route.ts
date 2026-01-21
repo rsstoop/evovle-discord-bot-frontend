@@ -3,6 +3,9 @@ import { cookies } from 'next/headers'
 import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
 import { embedDocument } from '@/lib/embedDocument'
 
+export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs'
+
 export async function PUT(
   req: Request,
   context: { params: Promise<{ id: string }> }
@@ -97,34 +100,31 @@ export async function DELETE(
 
   const cookieStore = await cookies()
   const authed = cookieStore.get('dashboard-auth')?.value === 'authenticated'
-  console.log('[delete-kb] Auth check:', { authed })
 
   if (!authed) {
+    console.log('[delete-kb] Unauthorized request')
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   const params = await context.params
   const id = params?.id
-  console.log('[delete-kb] Document ID:', id)
 
   if (!id) {
+    console.log('[delete-kb] Missing document ID')
     return NextResponse.json({ error: 'Missing id' }, { status: 400 })
   }
 
   try {
-    console.log('[delete-kb] Initializing Supabase admin client...')
     const supabaseAdmin = getSupabaseAdmin()
-    console.log('[delete-kb] Admin client initialized successfully')
 
     // Determine if we're dealing with numeric doc_id or UUID id
     const numericId = Number(id)
     const isNumericId = !isNaN(numericId) && isFinite(numericId)
-    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
 
     // If numeric ID, we need to look up the UUID first
     let documentUuid = id
     if (isNumericId) {
-      console.log('[delete-kb] Looking up UUID for doc_id:', numericId)
+      console.log('[delete-kb] Looking up UUID for numeric doc_id:', numericId)
       const { data: doc, error: lookupError } = await supabaseAdmin
         .from('dashboard_knowledge_base')
         .select('id')
@@ -136,48 +136,56 @@ export async function DELETE(
         return NextResponse.json({ error: 'Document not found' }, { status: 404 })
       }
       documentUuid = doc.id
-      console.log('[delete-kb] Found UUID:', documentUuid)
     }
 
-    // Hard delete - permanently remove the document
-    console.log('[delete-kb] Deleting document with UUID:', documentUuid)
+    console.log('[delete-kb] Deleting document:', documentUuid)
 
-    // CRITICAL: Use .select() to verify deletion
-    const { data: deletedRows, error, status, statusText } = await supabaseAdmin
+    // Use .select() to verify deletion success
+    const { data: deletedRows, error } = await supabaseAdmin
       .from('dashboard_knowledge_base')
       .delete()
       .eq('id', documentUuid)
-      .select('id')  // ← Returns the deleted row(s)
-
-    console.log('[delete-kb] Delete result:', {
-      error,
-      status,
-      statusText,
-      rowsDeleted: deletedRows?.length || 0
-    })
+      .select('id')
 
     if (error) {
       console.error('[delete-kb] Delete failed:', error)
       throw new Error(`Delete failed: ${error.message}`)
     }
 
-    // CRITICAL: Verify at least one row was deleted
+    // Verify at least one row was deleted
     if (!deletedRows || deletedRows.length === 0) {
-      console.error('[delete-kb] Silent failure: 0 rows deleted', {
-        documentUuid,
-        error,
-        status
-      })
+      console.error('[delete-kb] No rows deleted for UUID:', documentUuid)
       throw new Error(
-        `Delete failed: Document not found or blocked by database policy (UUID: ${documentUuid})`
+        `Delete failed: Document not found or blocked by database policy`
       )
     }
 
-    console.log('[delete-kb] Document deleted successfully, rows affected:', deletedRows.length)
-    return NextResponse.json({ success: true, deletedCount: deletedRows.length })
+    console.log('[delete-kb] Successfully deleted', deletedRows.length, 'document(s)')
+
+    const response = NextResponse.json({
+      success: true,
+      deletedCount: deletedRows.length
+    })
+
+    // Prevent caching
+    response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+    response.headers.set('Pragma', 'no-cache')
+    response.headers.set('Expires', '0')
+
+    return response
   } catch (error: any) {
     console.error('[delete-kb] Error:', error)
-    return NextResponse.json({ error: error?.message ?? 'Failed to delete document' }, { status: 500 })
+
+    const errorResponse = NextResponse.json({
+      error: error?.message ?? 'Failed to delete document'
+    }, { status: 500 })
+
+    // Prevent caching even for errors
+    errorResponse.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+    errorResponse.headers.set('Pragma', 'no-cache')
+    errorResponse.headers.set('Expires', '0')
+
+    return errorResponse
   }
 }
 
