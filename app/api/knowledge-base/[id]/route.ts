@@ -141,20 +141,40 @@ export async function DELETE(
 
     // Hard delete - permanently remove the document
     console.log('[delete-kb] Deleting document with UUID:', documentUuid)
-    const { error, status, statusText } = await supabaseAdmin
+
+    // CRITICAL: Use .select() to verify deletion
+    const { data: deletedRows, error, status, statusText } = await supabaseAdmin
       .from('dashboard_knowledge_base')
       .delete()
       .eq('id', documentUuid)
+      .select('id')  // ← Returns the deleted row(s)
 
-    console.log('[delete-kb] Delete result:', { error, status, statusText })
+    console.log('[delete-kb] Delete result:', {
+      error,
+      status,
+      statusText,
+      rowsDeleted: deletedRows?.length || 0
+    })
 
     if (error) {
       console.error('[delete-kb] Delete failed:', error)
       throw new Error(`Delete failed: ${error.message}`)
     }
 
-    console.log('[delete-kb] Document deleted successfully')
-    return NextResponse.json({ success: true })
+    // CRITICAL: Verify at least one row was deleted
+    if (!deletedRows || deletedRows.length === 0) {
+      console.error('[delete-kb] Silent failure: 0 rows deleted', {
+        documentUuid,
+        error,
+        status
+      })
+      throw new Error(
+        `Delete failed: Document not found or blocked by database policy (UUID: ${documentUuid})`
+      )
+    }
+
+    console.log('[delete-kb] Document deleted successfully, rows affected:', deletedRows.length)
+    return NextResponse.json({ success: true, deletedCount: deletedRows.length })
   } catch (error: any) {
     console.error('[delete-kb] Error:', error)
     return NextResponse.json({ error: error?.message ?? 'Failed to delete document' }, { status: 500 })
