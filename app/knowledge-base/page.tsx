@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { BookOpen, Search, Plus, Menu, X, Download, Edit, Save, XCircle, RefreshCw, FileText, Tag } from "lucide-react";
+import { BookOpen, Search, Plus, Menu, X, Download, Edit, Save, XCircle, RefreshCw, FileText, Tag, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { Sidebar } from "@/components/sidebar";
 import { cn } from "@/lib/utils";
@@ -58,6 +58,7 @@ function KnowledgeBaseContent() {
   const [isSaving, setIsSaving] = useState(false);
   const [isRegeneratingSummary, setIsRegeneratingSummary] = useState(false);
   const [summaryFeedback, setSummaryFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   
   // Check if we're on the public docs domain - set on mount to prevent flash
   useEffect(() => {
@@ -108,6 +109,8 @@ function KnowledgeBaseContent() {
   const fetchKnowledgeBase = async () => {
     try {
       setIsLoading(true);
+      console.log('[fetchKnowledgeBase] Fetching documents...');
+
       const { data, error } = await supabase
         .from("dashboard_knowledge_base")
         .select("id, doc_id, source_filename, title, html, parent, summary, created_at, updated_at")
@@ -117,6 +120,7 @@ function KnowledgeBaseContent() {
       if (error) {
         console.error("Error fetching knowledge base:", error);
       } else {
+        console.log('[fetchKnowledgeBase] Fetched', data?.length || 0, 'documents');
         setItems(data || []);
       }
     } catch (error) {
@@ -311,6 +315,52 @@ function KnowledgeBaseContent() {
     }
   };
 
+  const handleDelete = async () => {
+    if (!selectedItem) return;
+
+    if (!window.confirm('Are you sure you want to delete this document? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      setIsDeleting(true);
+      console.log('[handleDelete] Deleting document:', selectedItem.id);
+
+      const res = await fetch(`/api/knowledge-base/${selectedItem.id}`, {
+        method: 'DELETE'
+      });
+
+      console.log('[handleDelete] Response status:', res.status);
+
+      if (!res.ok) {
+        const body = await res.json().catch((err) => {
+          console.error('[handleDelete] Failed to parse error response:', err);
+          return {};
+        });
+        console.error('[handleDelete] Delete failed:', body);
+        alert(body?.error || `Failed to delete document (${res.status} ${res.statusText}). Check console for details.`);
+        return;
+      }
+
+      console.log('[handleDelete] Delete successful');
+
+      // Success: clear selection and URL parameter
+      setSelectedItem(null);
+      router.push('/knowledge-base');
+
+      // Force a re-fetch with a slight delay to ensure database is updated
+      console.log('[handleDelete] Refreshing knowledge base...');
+      await new Promise(resolve => setTimeout(resolve, 500));
+      await fetchKnowledgeBase();
+      console.log('[handleDelete] Knowledge base refreshed');
+    } catch (error: any) {
+      console.error('[handleDelete] Error:', error);
+      alert(error?.message || 'An error occurred while deleting. Check console for details.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const getTitleFromHtml = (html: string): string => {
     const match = html.match(/<h1>(.*?)<\/h1>/);
     return match ? match[1] : "Untitled";
@@ -400,6 +450,14 @@ function KnowledgeBaseContent() {
                       disabled={isEditing}
                     >
                       <Edit className="h-3.5 w-3.5 mr-1" /> Edit
+                    </button>
+                    <button
+                      onClick={handleDelete}
+                      className="inline-flex items-center text-xs px-2 py-1 rounded border border-border hover:bg-muted/20"
+                      title="Delete this document"
+                      disabled={isEditing || isDeleting}
+                    >
+                      <Trash2 className="h-3.5 w-3.5 mr-1" /> {isDeleting ? 'Deleting...' : 'Delete'}
                     </button>
                   </div>
                 )}

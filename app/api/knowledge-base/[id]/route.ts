@@ -89,5 +89,77 @@ export async function PUT(
   }
 }
 
+export async function DELETE(
+  _req: Request,
+  context: { params: Promise<{ id: string }> }
+) {
+  console.log('[delete-kb] DELETE request received')
+
+  const cookieStore = await cookies()
+  const authed = cookieStore.get('dashboard-auth')?.value === 'authenticated'
+  console.log('[delete-kb] Auth check:', { authed })
+
+  if (!authed) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const params = await context.params
+  const id = params?.id
+  console.log('[delete-kb] Document ID:', id)
+
+  if (!id) {
+    return NextResponse.json({ error: 'Missing id' }, { status: 400 })
+  }
+
+  try {
+    console.log('[delete-kb] Initializing Supabase admin client...')
+    const supabaseAdmin = getSupabaseAdmin()
+    console.log('[delete-kb] Admin client initialized successfully')
+
+    // Determine if we're dealing with numeric doc_id or UUID id
+    const numericId = Number(id)
+    const isNumericId = !isNaN(numericId) && isFinite(numericId)
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+
+    // If numeric ID, we need to look up the UUID first
+    let documentUuid = id
+    if (isNumericId) {
+      console.log('[delete-kb] Looking up UUID for doc_id:', numericId)
+      const { data: doc, error: lookupError } = await supabaseAdmin
+        .from('dashboard_knowledge_base')
+        .select('id')
+        .eq('doc_id', numericId)
+        .single()
+
+      if (lookupError || !doc) {
+        console.error('[delete-kb] Document not found:', lookupError)
+        return NextResponse.json({ error: 'Document not found' }, { status: 404 })
+      }
+      documentUuid = doc.id
+      console.log('[delete-kb] Found UUID:', documentUuid)
+    }
+
+    // Hard delete - permanently remove the document
+    console.log('[delete-kb] Deleting document with UUID:', documentUuid)
+    const { error, status, statusText } = await supabaseAdmin
+      .from('dashboard_knowledge_base')
+      .delete()
+      .eq('id', documentUuid)
+
+    console.log('[delete-kb] Delete result:', { error, status, statusText })
+
+    if (error) {
+      console.error('[delete-kb] Delete failed:', error)
+      throw new Error(`Delete failed: ${error.message}`)
+    }
+
+    console.log('[delete-kb] Document deleted successfully')
+    return NextResponse.json({ success: true })
+  } catch (error: any) {
+    console.error('[delete-kb] Error:', error)
+    return NextResponse.json({ error: error?.message ?? 'Failed to delete document' }, { status: 500 })
+  }
+}
+
 
 
