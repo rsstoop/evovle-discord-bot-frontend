@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { BookOpen, Search, Plus, Menu, X, Download, Edit, Save, XCircle, RefreshCw, FileText, Tag, Trash2 } from "lucide-react";
+import { BookOpen, Search, Plus, Menu, X, Download, Edit, Save, XCircle, RefreshCw, FileText, Tag, Trash2, ChevronDown, ChevronUp, Sparkles, GitCompare, Eye } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { Sidebar } from "@/components/sidebar";
 import { cn } from "@/lib/utils";
@@ -18,8 +18,33 @@ interface KnowledgeBaseItem {
   html: string;
   parent: string | null;
   summary?: string | null;
+  transcript?: string | null;
   created_at?: string;
   updated_at?: string;
+}
+
+interface SimilarPair {
+  doc1: {
+    id: string;
+    doc_id: number;
+    title: string;
+    parent: string | null;
+  };
+  doc2: {
+    id: string;
+    doc_id: number;
+    title: string;
+    parent: string | null;
+  };
+  similarity: number;
+}
+
+interface AIReview {
+  isDuplicate: boolean;
+  confidence: 'high' | 'medium' | 'low';
+  reason: string;
+  recommendation: 'merge' | 'keep_both' | 'review_manually';
+  differences: string[];
 }
 
 function KnowledgeBaseContent() {
@@ -59,7 +84,14 @@ function KnowledgeBaseContent() {
   const [isRegeneratingSummary, setIsRegeneratingSummary] = useState(false);
   const [summaryFeedback, setSummaryFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
-  
+  const [showSimilarDocsModal, setShowSimilarDocsModal] = useState(false);
+  const [similarPairs, setSimilarPairs] = useState<SimilarPair[]>([]);
+  const [isLoadingSimilar, setIsLoadingSimilar] = useState(false);
+  const [showTranscript, setShowTranscript] = useState(false);
+  const [similarPairsStats, setSimilarPairsStats] = useState<{ totalDocs: number; threshold: number } | null>(null);
+  const [aiReviews, setAiReviews] = useState<Record<string, AIReview>>({});
+  const [reviewingPairs, setReviewingPairs] = useState<Set<string>>(new Set());
+
   // Check if we're on the public docs domain - set on mount to prevent flash
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -105,6 +137,13 @@ function KnowledgeBaseContent() {
     }
   }, [items, searchParams, isLoading]);
 
+  // Reset transcript view when switching docs
+  useEffect(() => {
+    if (selectedItem) {
+      setShowTranscript(false);
+    }
+  }, [selectedItem?.id]);
+
 
   const fetchKnowledgeBase = async () => {
     try {
@@ -113,7 +152,7 @@ function KnowledgeBaseContent() {
 
       const { data, error } = await supabase
         .from("dashboard_knowledge_base")
-        .select("id, doc_id, source_filename, title, html, parent, summary, created_at, updated_at")
+        .select("id, doc_id, source_filename, title, html, parent, summary, transcript, created_at, updated_at")
         .order("parent", { ascending: true })
         .order("title", { ascending: true });
 
@@ -359,6 +398,153 @@ function KnowledgeBaseContent() {
     return match ? match[1] : "Untitled";
   };
 
+  const fetchSimilarPairs = async () => {
+    try {
+      setIsLoadingSimilar(true);
+      setSimilarPairs([]);
+      setSimilarPairsStats(null);
+      const res = await fetch('/api/knowledge-base/similar-pairs');
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        console.error('[fetchSimilarPairs] Error:', body);
+        return;
+      }
+      const data = await res.json();
+      setSimilarPairs(data.pairs || []);
+      setSimilarPairsStats({ totalDocs: data.totalDocs, threshold: data.threshold });
+    } catch (error) {
+      console.error('[fetchSimilarPairs] Error:', error);
+    } finally {
+      setIsLoadingSimilar(false);
+    }
+  };
+
+  const handleOpenSimilarModal = () => {
+    setShowSimilarDocsModal(true);
+    fetchSimilarPairs();
+  };
+
+  const handleNavigateToDoc = (docId: number) => {
+    const item = items.find(i => i.doc_id === docId);
+    if (item) {
+      setSelectedItem(item);
+      setShowSimilarDocsModal(false);
+      setShowTranscript(false);
+      router.push(`/knowledge-base?id=${docId}`, { scroll: false });
+    }
+  };
+
+  const getSimilarityColor = (similarity: number): string => {
+    if (similarity >= 0.95) return 'text-red-500';
+    if (similarity >= 0.85) return 'text-orange-500';
+    if (similarity >= 0.75) return 'text-yellow-500';
+    return 'text-green-500';
+  };
+
+  const getSimilarityLabel = (similarity: number): string => {
+    if (similarity >= 0.95) return 'Near duplicate';
+    if (similarity >= 0.85) return 'Very similar';
+    if (similarity >= 0.75) return 'Similar';
+    return 'Related';
+  };
+
+  const reviewPairWithAI = async (pair: SimilarPair) => {
+    const pairKey = `${pair.doc1.id}-${pair.doc2.id}`;
+
+    // Mark as reviewing
+    setReviewingPairs(prev => new Set(prev).add(pairKey));
+
+    try {
+      const res = await fetch('/api/knowledge-base/review-duplicate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          doc1Id: pair.doc1.id,
+          doc2Id: pair.doc2.id,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        console.error('[reviewPairWithAI] Error:', body);
+        alert(body?.error || 'Failed to review with AI');
+        return;
+      }
+
+      const data = await res.json();
+      setAiReviews(prev => ({
+        ...prev,
+        [pairKey]: data.review,
+      }));
+    } catch (error) {
+      console.error('[reviewPairWithAI] Error:', error);
+      alert('Failed to review with AI');
+    } finally {
+      setReviewingPairs(prev => {
+        const next = new Set(prev);
+        next.delete(pairKey);
+        return next;
+      });
+    }
+  };
+
+  const getRecommendationColor = (rec: string): string => {
+    if (rec === 'merge') return 'text-red-500';
+    if (rec === 'keep_both') return 'text-green-500';
+    return 'text-yellow-500';
+  };
+
+  const getConfidenceColor = (conf: string): string => {
+    if (conf === 'high') return 'text-foreground';
+    if (conf === 'medium') return 'text-muted-foreground';
+    return 'text-muted-foreground/50';
+  };
+
+  const handleDeleteFromModal = async (docId: string, docDisplayId: number) => {
+    if (!window.confirm(`Are you sure you want to delete document #${docDisplayId}? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/knowledge-base/${docId}?t=${Date.now()}`, {
+        method: 'DELETE',
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache'
+        }
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        alert(body?.error || `Failed to delete document (${res.status} ${res.statusText})`);
+        return;
+      }
+
+      // Remove pairs containing this document from the list
+      setSimilarPairs(prev => prev.filter(pair =>
+        pair.doc1.id !== docId && pair.doc2.id !== docId
+      ));
+
+      // Clear any AI reviews for pairs with this document
+      setAiReviews(prev => {
+        const next = { ...prev };
+        Object.keys(next).forEach(key => {
+          if (key.includes(docId)) {
+            delete next[key];
+          }
+        });
+        return next;
+      });
+
+      // Refresh the knowledge base list
+      await fetchKnowledgeBase();
+
+    } catch (error: any) {
+      alert(error?.message || 'An error occurred while deleting');
+    }
+  };
+
   const filteredItems = items.filter((item) => {
     const articleTitle = getTitleFromHtml(item.html).toLowerCase();
     return articleTitle.includes(searchQuery.toLowerCase());
@@ -562,11 +748,39 @@ function KnowledgeBaseContent() {
                   </div>
                 </div>
               ) : (
-              <div className="prose prose-invert max-w-none">
-                <article
-                  dangerouslySetInnerHTML={{ __html: selectedItem.html }}
-                />
-              </div>
+              <>
+                <div className="prose prose-invert max-w-none">
+                  <article
+                    dangerouslySetInnerHTML={{ __html: selectedItem.html }}
+                  />
+                </div>
+
+                {/* View Transcript Dropdown */}
+                {!isPublicDomain && selectedItem.transcript && (
+                  <div className="mt-8 border-t border-border pt-6">
+                    <button
+                      onClick={() => setShowTranscript(!showTranscript)}
+                      className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      {showTranscript ? (
+                        <ChevronUp className="h-4 w-4" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4" />
+                      )}
+                      <Eye className="h-4 w-4" />
+                      <span>View Original Transcript</span>
+                    </button>
+                    {showTranscript && (
+                      <div className="mt-4 p-4 bg-muted/30 rounded-lg border border-border">
+                        <pre className="whitespace-pre-wrap text-xs text-muted-foreground font-mono leading-relaxed max-h-96 overflow-y-auto">
+                          {selectedItem.transcript}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+              </>
               )}
             </div>
           ) : (
@@ -821,6 +1035,15 @@ function KnowledgeBaseContent() {
               {!isPublicDomain && (
                 <div className="flex flex-col items-stretch mb-3 gap-2">
                   <div className="text-xs text-muted-foreground">Manage</div>
+                  <Button
+                    variant="outline"
+                    onClick={handleOpenSimilarModal}
+                    disabled={isSubmitting}
+                    className="w-full justify-start px-3 py-2 font-medium text-sm"
+                  >
+                    <GitCompare className="h-4 w-4 mr-1.5" />
+                    Find Duplicates
+                  </Button>
                   <label className="inline-flex items-center gap-2 cursor-pointer">
                     <input
                       type="file"
@@ -1650,6 +1873,194 @@ function KnowledgeBaseContent() {
               >
                 {isSubmitting ? (submissionStatus.message || 'Processing...') : 'Create doc'}
               </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Similar Documents Modal */}
+      {showSimilarDocsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/60"
+            onClick={() => setShowSimilarDocsModal(false)}
+          />
+          <div className="relative bg-background border border-border rounded-md shadow-lg w-full max-w-3xl mx-4 p-4 max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-sm font-medium flex items-center gap-2">
+                  <GitCompare className="h-4 w-4" />
+                  Duplicate Detection
+                </h2>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Document pairs with similar content (70%+ similarity)
+                  {similarPairsStats && (
+                    <span className="ml-2">• {similarPairsStats.totalDocs} docs analyzed</span>
+                  )}
+                </p>
+              </div>
+              <button
+                onClick={() => setShowSimilarDocsModal(false)}
+                className="p-1 rounded hover:bg-muted/50"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto">
+              {isLoadingSimilar ? (
+                <div className="flex items-center justify-center py-8">
+                  <RefreshCw className="h-4 w-4 animate-spin mr-2" />
+                  <span className="text-sm text-muted-foreground">Analyzing all documents for duplicates...</span>
+                </div>
+              ) : similarPairs.length === 0 ? (
+                <div className="text-center py-8 text-sm text-muted-foreground">
+                  No similar document pairs found above 70% similarity threshold.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {similarPairs.map((pair, index) => {
+                    const pairKey = `${pair.doc1.id}-${pair.doc2.id}`;
+                    const review = aiReviews[pairKey];
+                    const isReviewing = reviewingPairs.has(pairKey);
+
+                    return (
+                      <div
+                        key={pairKey}
+                        className={cn(
+                          "p-3 rounded-md border bg-muted/20",
+                          review?.isDuplicate ? "border-red-500/50" : "border-border"
+                        )}
+                      >
+                        <div className="flex items-center justify-between gap-3 mb-2">
+                          <div className={cn("text-xs font-mono font-bold", getSimilarityColor(pair.similarity))}>
+                            {(pair.similarity * 100).toFixed(1)}% {getSimilarityLabel(pair.similarity)}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => reviewPairWithAI(pair)}
+                              disabled={isReviewing}
+                              className="text-[10px] px-2 py-1 rounded bg-primary/10 hover:bg-primary/20 text-primary transition-colors disabled:opacity-50 flex items-center gap-1"
+                            >
+                              {isReviewing ? (
+                                <>
+                                  <RefreshCw className="h-3 w-3 animate-spin" />
+                                  Reviewing...
+                                </>
+                              ) : review ? (
+                                <>
+                                  <Sparkles className="h-3 w-3" />
+                                  Re-review
+                                </>
+                              ) : (
+                                <>
+                                  <Sparkles className="h-3 w-3" />
+                                  AI Review
+                                </>
+                              )}
+                            </button>
+                            <div className="text-[10px] text-muted-foreground">#{index + 1}</div>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            onClick={() => handleNavigateToDoc(pair.doc1.doc_id)}
+                            className="text-left p-2 rounded bg-background border border-border hover:bg-muted/50 transition-colors"
+                          >
+                            <div className="text-xs font-medium truncate">{pair.doc1.title}</div>
+                            {pair.doc1.parent && (
+                              <div className="text-[10px] text-muted-foreground mt-0.5 truncate">{pair.doc1.parent}</div>
+                            )}
+                            <div className="text-[10px] text-muted-foreground/50 mt-1">ID: {pair.doc1.doc_id}</div>
+                          </button>
+                          <button
+                            onClick={() => handleNavigateToDoc(pair.doc2.doc_id)}
+                            className="text-left p-2 rounded bg-background border border-border hover:bg-muted/50 transition-colors"
+                          >
+                            <div className="text-xs font-medium truncate">{pair.doc2.title}</div>
+                            {pair.doc2.parent && (
+                              <div className="text-[10px] text-muted-foreground mt-0.5 truncate">{pair.doc2.parent}</div>
+                            )}
+                            <div className="text-[10px] text-muted-foreground/50 mt-1">ID: {pair.doc2.doc_id}</div>
+                          </button>
+                        </div>
+
+                        {/* AI Review Result */}
+                        {review && (
+                          <div className={cn(
+                            "mt-3 p-2 rounded border text-xs",
+                            review.isDuplicate
+                              ? "bg-red-500/10 border-red-500/30"
+                              : "bg-green-500/10 border-green-500/30"
+                          )}>
+                            <div className="flex items-center justify-between mb-1">
+                              <span className={cn("font-medium", review.isDuplicate ? "text-red-500" : "text-green-500")}>
+                                {review.isDuplicate ? "Likely Duplicate" : "Not a Duplicate"}
+                              </span>
+                              <span className={cn("text-[10px]", getConfidenceColor(review.confidence))}>
+                                {review.confidence} confidence
+                              </span>
+                            </div>
+                            <p className="text-muted-foreground mb-2">{review.reason}</p>
+                            <div className="flex items-center justify-between">
+                              <span className={cn("font-medium", getRecommendationColor(review.recommendation))}>
+                                Recommendation: {review.recommendation.replace('_', ' ')}
+                              </span>
+                            </div>
+                            {review.differences && review.differences.length > 0 && (
+                              <div className="mt-2 pt-2 border-t border-border/50">
+                                <span className="text-[10px] text-muted-foreground">Differences:</span>
+                                <ul className="text-[10px] text-muted-foreground mt-1 list-disc list-inside">
+                                  {review.differences.map((diff, i) => (
+                                    <li key={i}>{diff}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                            {/* Delete buttons when recommendation is merge */}
+                            {review.recommendation === 'merge' && (
+                              <div className="mt-3 pt-2 border-t border-border/50">
+                                <span className="text-[10px] text-muted-foreground block mb-2">Delete one of the duplicates:</span>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <button
+                                    onClick={() => handleDeleteFromModal(pair.doc1.id, pair.doc1.doc_id)}
+                                    className="flex items-center justify-center gap-1 px-2 py-1.5 rounded bg-red-500/20 hover:bg-red-500/30 text-red-500 transition-colors"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                    <span>Delete #{pair.doc1.doc_id}</span>
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteFromModal(pair.doc2.id, pair.doc2.doc_id)}
+                                    className="flex items-center justify-center gap-1 px-2 py-1.5 rounded bg-red-500/20 hover:bg-red-500/30 text-red-500 transition-colors"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                    <span>Delete #{pair.doc2.doc_id}</span>
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-4 pt-3 border-t border-border">
+              <div className="flex items-center justify-between">
+                <div className="text-[10px] text-muted-foreground">
+                  <span className="text-red-500">95%+</span> Near duplicate &nbsp;|&nbsp;
+                  <span className="text-orange-500">85-95%</span> Very similar &nbsp;|&nbsp;
+                  <span className="text-yellow-500">75-85%</span> Similar &nbsp;|&nbsp;
+                  <span className="text-green-500">70-75%</span> Related
+                </div>
+                <div className="text-[10px] text-muted-foreground">
+                  {similarPairs.length} pair{similarPairs.length !== 1 ? 's' : ''} found
+                </div>
+              </div>
             </div>
           </div>
         </div>
