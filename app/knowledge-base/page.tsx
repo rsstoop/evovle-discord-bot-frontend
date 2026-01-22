@@ -114,10 +114,14 @@ function KnowledgeBaseContent() {
 
   useEffect(() => {
     if (items.length > 0 && !isLoading) {
-      // Check if there's a doc_id in the URL
+      // Check if there's an id in the URL (supports both numeric doc_id and UUID id)
       const docId = searchParams.get('id');
       if (docId) {
-        const item = items.find(i => String(i.doc_id) === String(docId));
+        // Try to find by doc_id first (numeric), then by UUID id
+        const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(docId);
+        const item = isUUID
+          ? items.find(i => i.id === docId)
+          : items.find(i => String(i.doc_id) === String(docId));
         if (item) {
           setSelectedItem((prev) => {
             // Only update if different to avoid unnecessary renders
